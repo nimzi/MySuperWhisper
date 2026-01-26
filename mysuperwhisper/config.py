@@ -71,6 +71,12 @@ class Config:
         self.input_device = None
         self.output_device = None
 
+        # Hotkey configuration
+        self.record_hotkey = "ctrl_l"  # Key for recording: "ctrl_l", "alt_r", "ctrl_r", etc.
+        self.record_press_count = 2  # Number of presses: 1=single, 2=double, 3=triple
+        self.history_hotkey = "ctrl_l"  # Key for history popup
+        self.history_press_count = 3  # Number of presses for history
+
     def load(self):
         """Load configuration from file."""
         needs_save = False
@@ -87,12 +93,20 @@ class Config:
                 self.input_device = data.get("input_device")
                 self.output_device = data.get("output_device")
 
+                # Hotkey configuration
+                self.record_hotkey = data.get("record_hotkey", "ctrl_l")
+                self.record_press_count = data.get("record_press_count", 2)
+                self.history_hotkey = data.get("history_hotkey", "ctrl_l")
+                self.history_press_count = data.get("history_press_count", 3)
+
                 log(f"Configuration loaded from {CONFIG_FILE}")
                 if self.language:
                     log(f"Language set to: {self.language}")
+                log(f"Record hotkey: {self.record_press_count}x {self.record_hotkey}")
 
                 # Check if new fields are missing (for config migration)
-                if "language" not in data or "task" not in data:
+                if ("language" not in data or "task" not in data or
+                    "record_hotkey" not in data or "record_press_count" not in data):
                     log("Updating config file with new fields")
                     needs_save = True
             else:
@@ -116,7 +130,11 @@ class Config:
                 "system_notifications_enabled": self.system_notifications_enabled,
                 "sound_notifications_enabled": self.sound_notifications_enabled,
                 "input_device": self.input_device,
-                "output_device": self.output_device
+                "output_device": self.output_device,
+                "record_hotkey": self.record_hotkey,
+                "record_press_count": self.record_press_count,
+                "history_hotkey": self.history_hotkey,
+                "history_press_count": self.history_press_count
             }
 
             with open(CONFIG_FILE, 'w') as f:

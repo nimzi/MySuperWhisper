@@ -1,89 +1,146 @@
 """
 Keyboard shortcut handling for MySuperWhisper.
-Manages Double Ctrl (record) and Triple Ctrl (history) detection.
+Manages configurable hotkeys for recording and history.
 """
 
 import threading
 import time
 from pynput import keyboard
-from .config import log
+from .config import log, config
 
 # Callback functions (set by main module)
-_on_double_ctrl = None
-_on_triple_ctrl = None
+_on_record_hotkey = None
+_on_history_hotkey = None
 _is_recording_callback = None
 
-# State for Ctrl detection
-_last_ctrl_time = 0
-_ctrl_press_count = 0
-_ctrl_action_timer = None
+# State for hotkey detection
+_last_press_time = {}  # Dict to track last press time per key
+_press_count = {}  # Dict to track press count per key
+_action_timer = {}  # Dict to track action timers per key
 
 
-def set_callbacks(on_double_ctrl, on_triple_ctrl, is_recording):
+def set_callbacks(on_record_hotkey, on_history_hotkey, is_recording):
     """
     Set callback functions for keyboard shortcuts.
 
     Args:
-        on_double_ctrl: Function to call on Double Ctrl
-        on_triple_ctrl: Function to call on Triple Ctrl
+        on_record_hotkey: Function to call on record hotkey
+        on_history_hotkey: Function to call on history hotkey
         is_recording: Function that returns True if currently recording
     """
-    global _on_double_ctrl, _on_triple_ctrl, _is_recording_callback
-    _on_double_ctrl = on_double_ctrl
-    _on_triple_ctrl = on_triple_ctrl
+    global _on_record_hotkey, _on_history_hotkey, _is_recording_callback
+    _on_record_hotkey = on_record_hotkey
+    _on_history_hotkey = on_history_hotkey
     _is_recording_callback = is_recording
 
 
-def _execute_double_ctrl_action():
-    """Execute Double Ctrl action after waiting period."""
-    global _ctrl_press_count, _ctrl_action_timer
+def _get_key_name(key):
+    """Convert pynput key to string name."""
+    if hasattr(key, 'name'):
+        return key.name
+    return None
 
-    # Check that we didn't get a 3rd Ctrl in the meantime
-    if _ctrl_press_count == 2 and _on_double_ctrl:
-        _on_double_ctrl()
 
-    _ctrl_press_count = 0
-    _ctrl_action_timer = None
+def _matches_hotkey(key, hotkey_config):
+    """Check if a key matches the configured hotkey."""
+    key_name = _get_key_name(key)
+    if not key_name:
+        return False
+
+    # Exact match
+    if key_name == hotkey_config:
+        return True
+
+    # Support generic "ctrl", "alt", "shift" matching both left and right
+    if hotkey_config in ["ctrl", "alt", "shift", "cmd"]:
+        if key_name in [hotkey_config, f"{hotkey_config}_l", f"{hotkey_config}_r"]:
+            return True
+
+    return False
+
+
+def _execute_hotkey_action(hotkey_name, target_count, callback):
+    """Execute hotkey action after waiting period."""
+    global _press_count, _action_timer
+
+    # Check that press count matches and we have a callback
+    if _press_count.get(hotkey_name, 0) == target_count and callback:
+        callback()
+
+    _press_count[hotkey_name] = 0
+    if hotkey_name in _action_timer:
+        _action_timer[hotkey_name] = None
 
 
 def _on_key_release(key):
     """Handle key release events."""
-    global _last_ctrl_time, _ctrl_press_count, _ctrl_action_timer
+    global _last_press_time, _press_count, _action_timer
 
-    # Detect Ctrl key (Left or Right)
-    if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
-        current_time = time.time()
+    # Check for record hotkey
+    if _matches_hotkey(key, config.record_hotkey):
+        _handle_hotkey_press(
+            "record",
+            config.record_press_count,
+            _on_record_hotkey
+        )
 
-        # If delay between releases is < 0.5s -> increment counter
-        if current_time - _last_ctrl_time < 0.5:
-            _ctrl_press_count += 1
+    # Check for history hotkey (only if not recording)
+    if _matches_hotkey(key, config.history_hotkey):
+        if not _is_recording_callback or not _is_recording_callback():
+            _handle_hotkey_press(
+                "history",
+                config.history_press_count,
+                _on_history_hotkey
+            )
 
-            if _ctrl_press_count == 2:
-                # Double Ctrl detected: wait 300ms to see if Triple Ctrl
-                if _ctrl_action_timer:
-                    _ctrl_action_timer.cancel()
-                _ctrl_action_timer = threading.Timer(0.3, _execute_double_ctrl_action)
-                _ctrl_action_timer.start()
 
-            elif _ctrl_press_count >= 3:
-                # Triple Ctrl: cancel Double Ctrl action and open history
-                if _ctrl_action_timer:
-                    _ctrl_action_timer.cancel()
-                    _ctrl_action_timer = None
-                _ctrl_press_count = 0
+def _handle_hotkey_press(hotkey_name, target_count, callback):
+    """Handle a hotkey press with configurable press count."""
+    global _last_press_time, _press_count, _action_timer
 
-                # Open history (only if not recording)
-                if _on_triple_ctrl and _is_recording_callback:
-                    if not _is_recording_callback():
-                        _on_triple_ctrl()
-        else:
-            # Reset counter if too much time between presses
-            if _ctrl_action_timer:
-                _ctrl_action_timer.cancel()
-                _ctrl_action_timer = None
-            _ctrl_press_count = 1
+    current_time = time.time()
+    last_time = _last_press_time.get(hotkey_name, 0)
 
-        _last_ctrl_time = current_time
+    # If delay between releases is < 0.5s -> increment counter
+    if current_time - last_time < 0.5:
+        _press_count[hotkey_name] = _press_count.get(hotkey_name, 0) + 1
+
+        # If we reached the target count
+        if _press_count[hotkey_name] == target_count:
+            # For single press, execute immediately
+            if target_count == 1:
+                if callback:
+                    callback()
+                _press_count[hotkey_name] = 0
+            else:
+                # For multiple presses, wait to see if more presses come
+                if hotkey_name in _action_timer and _action_timer[hotkey_name]:
+                    _action_timer[hotkey_name].cancel()
+                _action_timer[hotkey_name] = threading.Timer(
+                    0.3,
+                    lambda: _execute_hotkey_action(hotkey_name, target_count, callback)
+                )
+                _action_timer[hotkey_name].start()
+
+        elif _press_count[hotkey_name] > target_count:
+            # Too many presses, cancel any pending action
+            if hotkey_name in _action_timer and _action_timer[hotkey_name]:
+                _action_timer[hotkey_name].cancel()
+                _action_timer[hotkey_name] = None
+            _press_count[hotkey_name] = 0
+    else:
+        # Reset counter if too much time between presses
+        if hotkey_name in _action_timer and _action_timer[hotkey_name]:
+            _action_timer[hotkey_name].cancel()
+            _action_timer[hotkey_name] = None
+        _press_count[hotkey_name] = 1
+
+        # If target is single press, execute immediately
+        if target_count == 1 and callback:
+            callback()
+            _press_count[hotkey_name] = 0
+
+    _last_press_time[hotkey_name] = current_time
 
 
 def start_listener():
@@ -95,8 +152,35 @@ def start_listener():
     """
     listener = keyboard.Listener(on_release=_on_key_release)
     listener.start()
-    log("Keyboard listener started")
+
+    # Log configured hotkeys
+    record_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
+    history_desc = _get_hotkey_description(config.history_hotkey, config.history_press_count)
+    log(f"Keyboard listener started - Record: {record_desc}, History: {history_desc}")
+
     return listener
+
+
+def _get_hotkey_description(key, count):
+    """Get human-readable hotkey description."""
+    key_display = {
+        "ctrl_r": "Right Ctrl",
+        "ctrl_l": "Left Ctrl",
+        "ctrl": "Ctrl (any)",  # Backward compatibility
+        "alt_r": "Right Alt",
+        "alt_l": "Left Alt",
+        "alt": "Alt (any)",  # Backward compatibility
+        "alt_gr": "AltGr",
+        "shift_r": "Right Shift",
+        "shift_l": "Left Shift",
+        "shift": "Shift (any)",  # Backward compatibility
+        "cmd_r": "Right Cmd",
+        "cmd_l": "Left Cmd",
+        "cmd": "Cmd (any)"  # Backward compatibility
+    }.get(key, key.capitalize())
+
+    press_desc = {1: "Single", 2: "Double", 3: "Triple"}.get(count, f"{count}x")
+    return f"{press_desc} {key_display}"
 
 
 def stop_listener(listener):
