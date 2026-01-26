@@ -64,6 +64,8 @@ class Config:
     def __init__(self):
         # Default values
         self.model_size = "medium"
+        self.language = None  # Auto-detect if None, or use language code like "en", "fr", "es"
+        self.task = "transcribe"  # "transcribe" or "translate"
         self.system_notifications_enabled = True
         self.sound_notifications_enabled = True
         self.input_device = None
@@ -71,26 +73,46 @@ class Config:
 
     def load(self):
         """Load configuration from file."""
+        needs_save = False
         try:
             if CONFIG_FILE.exists():
                 with open(CONFIG_FILE, 'r') as f:
                     data = json.load(f)
 
                 self.model_size = data.get("model_size", "medium")
+                self.language = data.get("language")  # None = auto-detect
+                self.task = data.get("task", "transcribe")
                 self.system_notifications_enabled = data.get("system_notifications_enabled", True)
                 self.sound_notifications_enabled = data.get("sound_notifications_enabled", True)
                 self.input_device = data.get("input_device")
                 self.output_device = data.get("output_device")
 
                 log(f"Configuration loaded from {CONFIG_FILE}")
+                if self.language:
+                    log(f"Language set to: {self.language}")
+
+                # Check if new fields are missing (for config migration)
+                if "language" not in data or "task" not in data:
+                    log("Updating config file with new fields")
+                    needs_save = True
+            else:
+                log(f"No config file found at {CONFIG_FILE}, creating with defaults")
+                needs_save = True
         except Exception as e:
             log(f"Error loading config: {e}", "error")
+            needs_save = True
+
+        # Save config if needed (first run or migration)
+        if needs_save:
+            self.save()
 
     def save(self):
         """Save configuration to file."""
         try:
             data = {
                 "model_size": self.model_size,
+                "language": self.language,
+                "task": self.task,
                 "system_notifications_enabled": self.system_notifications_enabled,
                 "sound_notifications_enabled": self.sound_notifications_enabled,
                 "input_device": self.input_device,

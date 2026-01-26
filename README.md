@@ -140,12 +140,23 @@ Configuration is stored in `~/.config/mysuperwhisper/config.json`:
 ```json
 {
     "model_size": "medium",
-    "input_device_name": "Your Microphone",
-    "output_device_name": "Your Speakers",
+    "language": "en",
+    "task": "transcribe",
+    "input_device": "Your Microphone",
+    "output_device": "Your Speakers",
     "system_notifications_enabled": true,
     "sound_notifications_enabled": true
 }
 ```
+
+### Configuration Options
+
+- **model_size**: Size of Whisper model (see Model Sizes table below)
+- **language**: Language code for transcription (`"en"`, `"fr"`, `"es"`, etc.) or `null` for auto-detection
+- **task**: Either `"transcribe"` (default) or `"translate"` (translates audio to English)
+- **input_device** / **output_device**: Audio device names (set via tray menu)
+- **system_notifications_enabled**: Show desktop notifications
+- **sound_notifications_enabled**: Play audio beeps
 
 ### Model Sizes
 
