@@ -82,10 +82,14 @@ pip install -r requirements.txt
 
 ### Keyboard Shortcuts
 
+**Default shortcuts:**
+
 | Shortcut | Action |
 |----------|--------|
-| **Double Ctrl** | Start/Stop recording |
-| **Triple Ctrl** | Open transcription history |
+| **Double Left Ctrl** | Start/Stop recording |
+| **Triple Left Ctrl** | Open transcription history |
+
+**Note:** Keyboard shortcuts are fully configurable via the system tray menu. You can change both the key (Left/Right Ctrl, Alt, Shift) and the number of presses (single, double, or triple) for each action.
 
 ### System Tray
 
@@ -142,6 +146,10 @@ Configuration is stored in `~/.config/mysuperwhisper/config.json`:
     "model_size": "medium",
     "language": "en",
     "task": "transcribe",
+    "record_hotkey": "alt_r",
+    "record_press_count": 1,
+    "history_hotkey": "ctrl_l",
+    "history_press_count": 3,
     "input_device": "Your Microphone",
     "output_device": "Your Speakers",
     "system_notifications_enabled": true,
@@ -149,14 +157,25 @@ Configuration is stored in `~/.config/mysuperwhisper/config.json`:
 }
 ```
 
+This example configures:
+- Single press of Right Alt for recording
+- Triple press of Left Ctrl for history
+- English language transcription
+
 ### Configuration Options
 
 - **model_size**: Size of Whisper model (see Model Sizes table below)
 - **language**: Language code for transcription (`"en"`, `"fr"`, `"es"`, etc.) or `null` for auto-detection
 - **task**: Either `"transcribe"` (default) or `"translate"` (translates audio to English)
+- **record_hotkey**: Key for recording - `"ctrl_l"`, `"ctrl_r"`, `"alt_l"`, `"alt_r"`, `"shift_r"`
+- **record_press_count**: Number of presses for recording - `1` (single), `2` (double), or `3` (triple)
+- **history_hotkey**: Key for opening history popup
+- **history_press_count**: Number of presses for history popup
 - **input_device** / **output_device**: Audio device names (set via tray menu)
 - **system_notifications_enabled**: Show desktop notifications
 - **sound_notifications_enabled**: Play audio beeps
+
+**Tip:** You can configure keyboard shortcuts easily through the system tray menu under "⌨️ Keyboard Shortcuts" without manually editing the config file.
 
 ### Model Sizes
 

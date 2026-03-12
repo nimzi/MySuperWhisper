@@ -107,7 +107,10 @@ def update_tray(status, level=0.0):
 
     if status == "idle":
         color = "green"
-        detail = "Ready (Double Ctrl)"
+        # Show configured hotkey in tooltip
+        from .keyboard import _get_hotkey_description
+        hotkey_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
+        detail = f"Ready ({hotkey_desc})"
     elif status == "recording":
         color = "red"
         detail = "Recording..."
@@ -268,6 +271,76 @@ def _on_refresh_devices(icon, item):
     icon.menu = _create_menu()
 
 
+def _on_select_record_key(key_name):
+    """Handler for record hotkey selection."""
+    def wrapper(icon, item):
+        if config.record_hotkey != key_name:
+            config.record_hotkey = key_name
+            if _save_config_callback:
+                _save_config_callback()
+
+            from .keyboard import _get_hotkey_description
+            desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
+            log(f"Record hotkey changed to: {desc}")
+
+            # Refresh menu
+            icon.menu = _create_menu()
+            update_tray("idle")
+    return wrapper
+
+
+def _on_select_record_count(count):
+    """Handler for record press count selection."""
+    def wrapper(icon, item):
+        if config.record_press_count != count:
+            config.record_press_count = count
+            if _save_config_callback:
+                _save_config_callback()
+
+            from .keyboard import _get_hotkey_description
+            desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
+            log(f"Record hotkey changed to: {desc}")
+
+            # Refresh menu
+            icon.menu = _create_menu()
+            update_tray("idle")
+    return wrapper
+
+
+def _on_select_history_key(key_name):
+    """Handler for history hotkey selection."""
+    def wrapper(icon, item):
+        if config.history_hotkey != key_name:
+            config.history_hotkey = key_name
+            if _save_config_callback:
+                _save_config_callback()
+
+            from .keyboard import _get_hotkey_description
+            desc = _get_hotkey_description(config.history_hotkey, config.history_press_count)
+            log(f"History hotkey changed to: {desc}")
+
+            # Refresh menu
+            icon.menu = _create_menu()
+    return wrapper
+
+
+def _on_select_history_count(count):
+    """Handler for history press count selection."""
+    def wrapper(icon, item):
+        if config.history_press_count != count:
+            config.history_press_count = count
+            if _save_config_callback:
+                _save_config_callback()
+
+            from .keyboard import _get_hotkey_description
+            desc = _get_hotkey_description(config.history_hotkey, config.history_press_count)
+            log(f"History hotkey changed to: {desc}")
+
+            # Refresh menu
+            icon.menu = _create_menu()
+    return wrapper
+
+
 def _on_quit(icon, item):
     """Quit application."""
     icon.stop()
@@ -388,6 +461,70 @@ def _create_menu():
         )
     )
 
+    # Hotkey configuration menu
+    from .keyboard import _get_hotkey_description
+
+    # Record hotkey submenu
+    record_key_menu = pystray.Menu(
+        pystray.MenuItem("Right Alt", _on_select_record_key("alt_r"),
+                        checked=lambda item: config.record_hotkey == "alt_r", radio=True),
+        pystray.MenuItem("Right Ctrl", _on_select_record_key("ctrl_r"),
+                        checked=lambda item: config.record_hotkey == "ctrl_r", radio=True),
+        pystray.MenuItem("Right Shift", _on_select_record_key("shift_r"),
+                        checked=lambda item: config.record_hotkey == "shift_r", radio=True),
+        pystray.MenuItem("Left Ctrl", _on_select_record_key("ctrl_l"),
+                        checked=lambda item: config.record_hotkey == "ctrl_l", radio=True),
+        pystray.MenuItem("Left Alt", _on_select_record_key("alt_l"),
+                        checked=lambda item: config.record_hotkey == "alt_l", radio=True),
+    )
+
+    record_count_menu = pystray.Menu(
+        pystray.MenuItem("Single press", _on_select_record_count(1),
+                        checked=lambda item: config.record_press_count == 1, radio=True),
+        pystray.MenuItem("Double press", _on_select_record_count(2),
+                        checked=lambda item: config.record_press_count == 2, radio=True),
+        pystray.MenuItem("Triple press", _on_select_record_count(3),
+                        checked=lambda item: config.record_press_count == 3, radio=True),
+    )
+
+    # History hotkey submenu
+    history_key_menu = pystray.Menu(
+        pystray.MenuItem("Right Alt", _on_select_history_key("alt_r"),
+                        checked=lambda item: config.history_hotkey == "alt_r", radio=True),
+        pystray.MenuItem("Right Ctrl", _on_select_history_key("ctrl_r"),
+                        checked=lambda item: config.history_hotkey == "ctrl_r", radio=True),
+        pystray.MenuItem("Right Shift", _on_select_history_key("shift_r"),
+                        checked=lambda item: config.history_hotkey == "shift_r", radio=True),
+        pystray.MenuItem("Left Ctrl", _on_select_history_key("ctrl_l"),
+                        checked=lambda item: config.history_hotkey == "ctrl_l", radio=True),
+        pystray.MenuItem("Left Alt", _on_select_history_key("alt_l"),
+                        checked=lambda item: config.history_hotkey == "alt_l", radio=True),
+    )
+
+    history_count_menu = pystray.Menu(
+        pystray.MenuItem("Single press", _on_select_history_count(1),
+                        checked=lambda item: config.history_press_count == 1, radio=True),
+        pystray.MenuItem("Double press", _on_select_history_count(2),
+                        checked=lambda item: config.history_press_count == 2, radio=True),
+        pystray.MenuItem("Triple press", _on_select_history_count(3),
+                        checked=lambda item: config.history_press_count == 3, radio=True),
+    )
+
+    # Hotkeys submenu
+    record_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
+    history_desc = _get_hotkey_description(config.history_hotkey, config.history_press_count)
+
+    hotkeys_menu = pystray.Menu(
+        pystray.MenuItem(f"🎤 Record: {record_desc}", pystray.Menu(
+            pystray.MenuItem("Key", record_key_menu),
+            pystray.MenuItem("Press count", record_count_menu),
+        )),
+        pystray.MenuItem(f"📜 History: {history_desc}", pystray.Menu(
+            pystray.MenuItem("Key", history_key_menu),
+            pystray.MenuItem("Press count", history_count_menu),
+        )),
+    )
+
     # Files submenu
     files_menu = pystray.Menu(
         pystray.MenuItem("Open configuration", _on_open_config),
@@ -407,7 +544,8 @@ def _create_menu():
             checked=lambda item: config.sound_notifications_enabled
         ),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("History (Triple Ctrl)", _on_show_history),
+        pystray.MenuItem("⌨️ Keyboard Shortcuts", hotkeys_menu),
+        pystray.MenuItem("History", _on_show_history),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(
             "Mic Test (audio loopback + gauge)",
