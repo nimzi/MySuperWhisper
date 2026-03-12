@@ -107,11 +107,12 @@ def update_tray(status, level=0.0):
     detail = ""
 
     if status == "idle":
-        color = "green"
-        # Show configured hotkey in tooltip
+        # Green = transcribe mode, Purple = translate mode
+        color = (138, 43, 226) if config.task == "translate" else "green"
         from .keyboard import _get_hotkey_description
         hotkey_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
-        detail = f"Ready ({hotkey_desc})"
+        task_label = "Translate→EN" if config.task == "translate" else "Transcribe"
+        detail = f"Ready ({hotkey_desc}) [{task_label}]"
     elif status == "recording":
         color = "red"
         detail = "Recording..."
@@ -259,6 +260,7 @@ def _on_select_task(task_name):
                 _save_config_callback()
             log(f"Task changed to: {task_name}")
             icon.menu = _create_menu()
+            update_tray("idle")
     return wrapper
 
 
@@ -665,16 +667,16 @@ def _create_menu():
         ]
     )
 
-    # Task menu
+    # Task menu with color legend
     task_menu = pystray.Menu(
         pystray.MenuItem(
-            "Transcribe (keep original language)",
+            "🟢 Transcribe (keep original language)",
             _on_select_task("transcribe"),
             checked=lambda item: config.task == "transcribe",
             radio=True
         ),
         pystray.MenuItem(
-            "Translate (to English)",
+            "🟣 Translate (to English)",
             _on_select_task("translate"),
             checked=lambda item: config.task == "translate",
             radio=True
@@ -727,7 +729,10 @@ def _create_menu():
         ),
         pystray.MenuItem("AI Model", model_menu),
         pystray.MenuItem("🌐 Language", language_menu),
-        pystray.MenuItem("📝 Task", task_menu),
+        pystray.MenuItem(
+            f"📝 Task: {'🟣 Translate→EN' if config.task == 'translate' else '🟢 Transcribe'}",
+            task_menu
+        ),
         pystray.Menu.SEPARATOR,
         
         # Audio Devices
