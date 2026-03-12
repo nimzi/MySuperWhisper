@@ -3,5 +3,5 @@ sounddevice
 numpy<2.0
 pynput
 pystray
-Pillow>=10.3.0,<11.0
+Pillow>=12.1.1
 pyperclip
