@@ -1,5 +1,8 @@
 name: "CI - Build & Smoke Test"
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [ "main" ]
