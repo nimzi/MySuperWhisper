@@ -6,6 +6,7 @@ Provides visual feedback and configuration access.
 import subprocess
 import threading
 import time
+import tkinter as tk
 import pystray
 from PIL import Image, ImageDraw
 from .config import log, config, CONFIG_FILE, LOG_FILE, LOG_DIR
@@ -236,6 +237,31 @@ def _on_select_model(name):
     return wrapper
 
 
+def _on_select_language(lang_code):
+    """Handler for language selection."""
+    def wrapper(icon, item):
+        if config.language != lang_code:
+            config.language = lang_code
+            if _save_config_callback:
+                _save_config_callback()
+            label = lang_code if lang_code else "Auto-detect"
+            log(f"Language changed to: {label}")
+            icon.menu = _create_menu()
+    return wrapper
+
+
+def _on_select_task(task_name):
+    """Handler for task selection."""
+    def wrapper(icon, item):
+        if config.task != task_name:
+            config.task = task_name
+            if _save_config_callback:
+                _save_config_callback()
+            log(f"Task changed to: {task_name}")
+            icon.menu = _create_menu()
+    return wrapper
+
+
 def _on_select_source(name):
     """Handler for microphone selection."""
     def wrapper(icon, item):
@@ -271,74 +297,143 @@ def _on_refresh_devices(icon, item):
     icon.menu = _create_menu()
 
 
-def _on_select_record_key(key_name):
-    """Handler for record hotkey selection."""
-    def wrapper(icon, item):
-        if config.record_hotkey != key_name:
-            config.record_hotkey = key_name
-            if _save_config_callback:
-                _save_config_callback()
+def _show_shortcut_popup(title, current_key, current_count, on_save):
+    """
+    Show a popup to detect and configure a keyboard shortcut.
+    The user presses their desired shortcut (key + tap count),
+    the popup shows it live, and they validate with OK.
+    """
+    from .keyboard import (
+        start_key_detection, stop_key_detection,
+        _get_key_display_name, reset_hotkey_state
+    )
 
-            from .keyboard import _get_hotkey_description
-            desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
-            log(f"Record hotkey changed to: {desc}")
+    result = {"key": current_key, "count": current_count, "confirmed": False}
 
-            # Refresh menu
-            icon.menu = _create_menu()
-            update_tray("idle")
-    return wrapper
+    def run_popup():
+        root = tk.Tk()
+        root.title(title)
+        root.attributes('-topmost', True)
+        root.configure(bg='#2d2d2d')
+        root.resizable(False, False)
+
+        window_width = 450
+        window_height = 250
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        # Title
+        tk.Label(
+            root, text=title, font=('Sans', 13, 'bold'),
+            bg='#2d2d2d', fg='#ffffff', pady=15
+        ).pack(fill='x')
+
+        # Instruction
+        tk.Label(
+            root,
+            text="Press your shortcut\n(e.g. double Ctrl+A, triple Right Ctrl, F1...)",
+            font=('Sans', 10), bg='#2d2d2d', fg='#aaaaaa', pady=5
+        ).pack(fill='x')
+
+        # Current shortcut display
+        current_display = _get_key_display_name(current_key)
+        press_label = {1: "Single", 2: "Double", 3: "Triple"}.get(current_count, f"{current_count}x")
+        shortcut_var = tk.StringVar(value=f"{press_label} {current_display}")
+
+        shortcut_label = tk.Label(
+            root, textvariable=shortcut_var,
+            font=('Sans', 18, 'bold'),
+            bg='#3d3d3d', fg='#5294e2',
+            pady=20, padx=20, relief='sunken'
+        )
+        shortcut_label.pack(fill='x', padx=30, pady=10)
+
+        # Buttons frame
+        btn_frame = tk.Frame(root, bg='#2d2d2d')
+        btn_frame.pack(fill='x', padx=30, pady=10)
+
+        def on_ok():
+            result["confirmed"] = True
+            stop_key_detection()
+            root.destroy()
+
+        def on_cancel():
+            stop_key_detection()
+            root.destroy()
+
+        tk.Button(
+            btn_frame, text="OK", font=('Sans', 11, 'bold'),
+            bg='#5294e2', fg='#ffffff', activebackground='#4a84c8',
+            width=10, command=on_ok, relief='flat'
+        ).pack(side='left', expand=True, padx=5)
+
+        tk.Button(
+            btn_frame, text="Cancel", font=('Sans', 11),
+            bg='#555555', fg='#ffffff', activebackground='#666666',
+            width=10, command=on_cancel, relief='flat'
+        ).pack(side='right', expand=True, padx=5)
+
+        # Live update callback from key detection
+        def on_key_update(key_name, display_name, count):
+            result["key"] = key_name
+            result["count"] = count
+            press = {1: "Single", 2: "Double", 3: "Triple"}.get(count, f"{count}x")
+            try:
+                shortcut_var.set(f"{press} {display_name}")
+            except tk.TclError:
+                pass  # Window already closed
+
+        start_key_detection(on_key_update)
+
+        root.protocol("WM_DELETE_WINDOW", on_cancel)
+        root.mainloop()
+
+        # Apply if confirmed
+        if result["confirmed"]:
+            on_save(result["key"], result["count"])
+            reset_hotkey_state()
+
+    threading.Thread(target=run_popup, daemon=True).start()
 
 
-def _on_select_record_count(count):
-    """Handler for record press count selection."""
-    def wrapper(icon, item):
-        if config.record_press_count != count:
-            config.record_press_count = count
-            if _save_config_callback:
-                _save_config_callback()
+def _on_configure_record_shortcut(icon, item):
+    """Open shortcut configuration popup for record."""
+    def on_save(key, count):
+        config.record_hotkey = key
+        config.record_press_count = count
+        if _save_config_callback:
+            _save_config_callback()
+        from .keyboard import _get_hotkey_description
+        desc = _get_hotkey_description(key, count)
+        log(f"Record shortcut changed to: {desc}")
+        icon.menu = _create_menu()
+        update_tray("idle")
 
-            from .keyboard import _get_hotkey_description
-            desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
-            log(f"Record hotkey changed to: {desc}")
-
-            # Refresh menu
-            icon.menu = _create_menu()
-            update_tray("idle")
-    return wrapper
-
-
-def _on_select_history_key(key_name):
-    """Handler for history hotkey selection."""
-    def wrapper(icon, item):
-        if config.history_hotkey != key_name:
-            config.history_hotkey = key_name
-            if _save_config_callback:
-                _save_config_callback()
-
-            from .keyboard import _get_hotkey_description
-            desc = _get_hotkey_description(config.history_hotkey, config.history_press_count)
-            log(f"History hotkey changed to: {desc}")
-
-            # Refresh menu
-            icon.menu = _create_menu()
-    return wrapper
+    _show_shortcut_popup(
+        "Record Shortcut",
+        config.record_hotkey, config.record_press_count, on_save
+    )
 
 
-def _on_select_history_count(count):
-    """Handler for history press count selection."""
-    def wrapper(icon, item):
-        if config.history_press_count != count:
-            config.history_press_count = count
-            if _save_config_callback:
-                _save_config_callback()
+def _on_configure_history_shortcut(icon, item):
+    """Open shortcut configuration popup for history."""
+    def on_save(key, count):
+        config.history_hotkey = key
+        config.history_press_count = count
+        if _save_config_callback:
+            _save_config_callback()
+        from .keyboard import _get_hotkey_description
+        desc = _get_hotkey_description(key, count)
+        log(f"History shortcut changed to: {desc}")
+        icon.menu = _create_menu()
 
-            from .keyboard import _get_hotkey_description
-            desc = _get_hotkey_description(config.history_hotkey, config.history_press_count)
-            log(f"History hotkey changed to: {desc}")
-
-            # Refresh menu
-            icon.menu = _create_menu()
-    return wrapper
+    _show_shortcut_popup(
+        "History Shortcut",
+        config.history_hotkey, config.history_press_count, on_save
+    )
 
 
 def _on_quit(icon, item):
@@ -461,68 +556,68 @@ def _create_menu():
         )
     )
 
-    # Hotkey configuration menu
+    # Language menu
+    languages = [
+        (None, "Auto-detect"),
+        ("en", "English"),
+        ("fr", "Français"),
+        ("es", "Español"),
+        ("de", "Deutsch"),
+        ("it", "Italiano"),
+        ("pt", "Português"),
+        ("nl", "Nederlands"),
+        ("ja", "日本語"),
+        ("zh", "中文"),
+        ("ko", "한국어"),
+        ("ru", "Русский"),
+        ("ar", "العربية"),
+        ("pl", "Polski"),
+        ("uk", "Українська"),
+    ]
+
+    language_menu = pystray.Menu(
+        *[
+            pystray.MenuItem(
+                label,
+                _on_select_language(code),
+                checked=lambda item, c=code: config.language == c,
+                radio=True
+            )
+            for code, label in languages
+        ]
+    )
+
+    # Task menu
+    task_menu = pystray.Menu(
+        pystray.MenuItem(
+            "Transcribe (keep original language)",
+            _on_select_task("transcribe"),
+            checked=lambda item: config.task == "transcribe",
+            radio=True
+        ),
+        pystray.MenuItem(
+            "Translate (to English)",
+            _on_select_task("translate"),
+            checked=lambda item: config.task == "translate",
+            radio=True
+        ),
+    )
+
+    # Hotkey configuration
     from .keyboard import _get_hotkey_description
 
-    # Record hotkey submenu
-    record_key_menu = pystray.Menu(
-        pystray.MenuItem("Right Alt", _on_select_record_key("alt_r"),
-                        checked=lambda item: config.record_hotkey == "alt_r", radio=True),
-        pystray.MenuItem("Right Ctrl", _on_select_record_key("ctrl_r"),
-                        checked=lambda item: config.record_hotkey == "ctrl_r", radio=True),
-        pystray.MenuItem("Right Shift", _on_select_record_key("shift_r"),
-                        checked=lambda item: config.record_hotkey == "shift_r", radio=True),
-        pystray.MenuItem("Left Ctrl", _on_select_record_key("ctrl_l"),
-                        checked=lambda item: config.record_hotkey == "ctrl_l", radio=True),
-        pystray.MenuItem("Left Alt", _on_select_record_key("alt_l"),
-                        checked=lambda item: config.record_hotkey == "alt_l", radio=True),
-    )
-
-    record_count_menu = pystray.Menu(
-        pystray.MenuItem("Single press", _on_select_record_count(1),
-                        checked=lambda item: config.record_press_count == 1, radio=True),
-        pystray.MenuItem("Double press", _on_select_record_count(2),
-                        checked=lambda item: config.record_press_count == 2, radio=True),
-        pystray.MenuItem("Triple press", _on_select_record_count(3),
-                        checked=lambda item: config.record_press_count == 3, radio=True),
-    )
-
-    # History hotkey submenu
-    history_key_menu = pystray.Menu(
-        pystray.MenuItem("Right Alt", _on_select_history_key("alt_r"),
-                        checked=lambda item: config.history_hotkey == "alt_r", radio=True),
-        pystray.MenuItem("Right Ctrl", _on_select_history_key("ctrl_r"),
-                        checked=lambda item: config.history_hotkey == "ctrl_r", radio=True),
-        pystray.MenuItem("Right Shift", _on_select_history_key("shift_r"),
-                        checked=lambda item: config.history_hotkey == "shift_r", radio=True),
-        pystray.MenuItem("Left Ctrl", _on_select_history_key("ctrl_l"),
-                        checked=lambda item: config.history_hotkey == "ctrl_l", radio=True),
-        pystray.MenuItem("Left Alt", _on_select_history_key("alt_l"),
-                        checked=lambda item: config.history_hotkey == "alt_l", radio=True),
-    )
-
-    history_count_menu = pystray.Menu(
-        pystray.MenuItem("Single press", _on_select_history_count(1),
-                        checked=lambda item: config.history_press_count == 1, radio=True),
-        pystray.MenuItem("Double press", _on_select_history_count(2),
-                        checked=lambda item: config.history_press_count == 2, radio=True),
-        pystray.MenuItem("Triple press", _on_select_history_count(3),
-                        checked=lambda item: config.history_press_count == 3, radio=True),
-    )
-
-    # Hotkeys submenu
     record_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
     history_desc = _get_hotkey_description(config.history_hotkey, config.history_press_count)
 
     hotkeys_menu = pystray.Menu(
-        pystray.MenuItem(f"🎤 Record: {record_desc}", pystray.Menu(
-            pystray.MenuItem("Key", record_key_menu),
-            pystray.MenuItem("Press count", record_count_menu),
-        )),
-        pystray.MenuItem(f"📜 History: {history_desc}", pystray.Menu(
-            pystray.MenuItem("Key", history_key_menu),
-            pystray.MenuItem("Press count", history_count_menu),
-        )),
+        pystray.MenuItem(
+            f"🎤 Record: {record_desc}  — Configure...",
+            _on_configure_record_shortcut
+        ),
+        pystray.MenuItem(
+            f"📜 History: {history_desc}  — Configure...",
+            _on_configure_history_shortcut
+        ),
     )
 
     # Files submenu
@@ -553,6 +648,8 @@ def _create_menu():
             checked=lambda item: audio.is_testing_mic()
         ),
         pystray.MenuItem("AI Model", model_menu),
+        pystray.MenuItem("🌐 Language", language_menu),
+        pystray.MenuItem("📝 Task", task_menu),
         pystray.Menu.SEPARATOR,
         
         # Audio Devices

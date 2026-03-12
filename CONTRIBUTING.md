@@ -34,7 +34,7 @@ Thank you for your interest in contributing to MySuperWhisper! This document pro
 
 ```bash
 # Clone your fork
-git clone https://github.com/YOUR_USERNAME/MySuperWhisper.git
+git clone https://github.com/OlivierMary/MySuperWhisper.git
 cd MySuperWhisper
 
 # Create virtual environment

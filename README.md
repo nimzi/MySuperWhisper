@@ -23,7 +23,7 @@ MySuperWhisper is a Linux desktop application that provides **global voice-to-te
 
 ## Features
 
-- 🎤 **Global Hotkey** - Double Ctrl works in any application
+- 🎤 **Global Hotkey** - Fully configurable shortcut works in any application
 - 🚀 **GPU Acceleration** - Uses CUDA with INT8 quantization for fast transcription
 - 🧠 **Multiple Models** - Choose from tiny to large-v3 based on your needs
 - 🗣️ **Voice Commands** - Say "new line" or "enter" to control text formatting
@@ -89,15 +89,23 @@ pip install -r requirements.txt
 | **Double Left Ctrl** | Start/Stop recording |
 | **Triple Left Ctrl** | Open transcription history |
 
-**Note:** Keyboard shortcuts are fully configurable via the system tray menu. You can change both the key (Left/Right Ctrl, Alt, Shift) and the number of presses (single, double, or triple) for each action.
+Keyboard shortcuts are **fully configurable** via the system tray menu under "⌨️ Keyboard Shortcuts". Click "Configure..." to open the shortcut detection popup:
+
+1. **Press your desired shortcut** exactly as you want to use it (e.g., double-tap Ctrl+A, triple Right Ctrl, single F1...)
+2. The popup **shows in real-time** what is detected (key, combination, and tap count)
+3. Click **OK** to validate
+
+You can use **any key or combination**: modifier keys (Ctrl, Alt, Shift), function keys (F1-F12), regular keys (A-Z, 0-9), or combinations like Ctrl+A, Alt+Space, Shift+F1, etc.
 
 ### System Tray
 
 Right-click the tray icon to access:
 - Enable/disable notifications
+- Configure keyboard shortcuts
 - View transcription history
 - Test microphone with audio loopback
 - Select AI model size
+- Select language and transcription task
 - Choose input/output audio devices
 - Open configuration files
 
@@ -146,8 +154,8 @@ Configuration is stored in `~/.config/mysuperwhisper/config.json`:
     "model_size": "medium",
     "language": "en",
     "task": "transcribe",
-    "record_hotkey": "alt_r",
-    "record_press_count": 1,
+    "record_hotkey": "ctrl_l+a",
+    "record_press_count": 2,
     "history_hotkey": "ctrl_l",
     "history_press_count": 3,
     "input_device": "Your Microphone",
@@ -158,7 +166,7 @@ Configuration is stored in `~/.config/mysuperwhisper/config.json`:
 ```
 
 This example configures:
-- Single press of Right Alt for recording
+- Double press of Left Ctrl + A for recording
 - Triple press of Left Ctrl for history
 - English language transcription
 
@@ -167,15 +175,15 @@ This example configures:
 - **model_size**: Size of Whisper model (see Model Sizes table below)
 - **language**: Language code for transcription (`"en"`, `"fr"`, `"es"`, etc.) or `null` for auto-detection
 - **task**: Either `"transcribe"` (default) or `"translate"` (translates audio to English)
-- **record_hotkey**: Key for recording - `"ctrl_l"`, `"ctrl_r"`, `"alt_l"`, `"alt_r"`, `"shift_r"`
+- **record_hotkey**: Key or combination for recording - any key (`"ctrl_l"`, `"f1"`, `"a"`) or combination (`"ctrl_l+a"`, `"alt+space"`)
 - **record_press_count**: Number of presses for recording - `1` (single), `2` (double), or `3` (triple)
-- **history_hotkey**: Key for opening history popup
+- **history_hotkey**: Key or combination for opening history popup
 - **history_press_count**: Number of presses for history popup
 - **input_device** / **output_device**: Audio device names (set via tray menu)
 - **system_notifications_enabled**: Show desktop notifications
 - **sound_notifications_enabled**: Play audio beeps
 
-**Tip:** You can configure keyboard shortcuts easily through the system tray menu under "⌨️ Keyboard Shortcuts" without manually editing the config file.
+**Tip:** You can configure keyboard shortcuts easily through the system tray menu under "⌨️ Keyboard Shortcuts" — a detection popup lets you set shortcuts by simply pressing them, no manual editing needed.
 
 ### Model Sizes
 
