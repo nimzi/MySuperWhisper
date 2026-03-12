@@ -77,6 +77,27 @@ def _build_combo_string(held_modifiers, trigger_key):
     return trigger_key
 
 
+# On Linux, pynput often reports the "left" modifier as the generic name
+# (e.g., "ctrl" instead of "ctrl_l") while tkinter always uses specific names.
+# This maps config names to the set of pynput names that should match.
+_KEY_ALIASES = {
+    "ctrl_l": ("ctrl_l", "ctrl"),
+    "alt_l": ("alt_l", "alt"),
+    "shift_l": ("shift_l", "shift"),
+    "cmd_l": ("cmd_l", "cmd"),
+    "alt_r": ("alt_r", "alt_gr"),
+    "alt_gr": ("alt_gr", "alt_r"),
+}
+
+
+def _key_matches_name(key_name, config_name):
+    """Check if a pynput key name matches a config key name (with aliases)."""
+    if key_name == config_name:
+        return True
+    aliases = _KEY_ALIASES.get(config_name)
+    return aliases is not None and key_name in aliases
+
+
 def _matches_hotkey(key, hotkey_config):
     """Check if a key release matches the configured hotkey (with modifier support)."""
     key_name = _get_key_name(key)
@@ -86,15 +107,23 @@ def _matches_hotkey(key, hotkey_config):
     modifiers, trigger = _parse_hotkey(hotkey_config)
 
     # The released key must be the trigger
-    if key_name != trigger:
+    if not _key_matches_name(key_name, trigger):
         return False
 
     # No modifiers required -> solo key
     if not modifiers:
         return True
 
-    # Check all required modifiers are currently held
-    return modifiers.issubset(_held_keys)
+    # Check all required modifiers are currently held (with alias support)
+    for mod in modifiers:
+        found = False
+        for held in _held_keys:
+            if _key_matches_name(held, mod):
+                found = True
+                break
+        if not found:
+            return False
+    return True
 
 
 def reset_hotkey_state():
@@ -122,6 +151,21 @@ def start_key_detection(callback):
     Call stop_key_detection() to end detection mode.
     """
     global _detect_callback, _detect_combo, _detect_count, _detect_last_time
+    global _detect_timer
+
+    # Cancel any leftover timer from a previous detection session
+    if _detect_timer:
+        _detect_timer.cancel()
+        _detect_timer = None
+
+    # Clear held keys to avoid stale state
+    _held_keys.clear()
+    _held_keys_time.clear()
+
+    # Force restart the listener to guarantee a fresh X11 connection
+    # (tkinter popup creation/destruction can corrupt pynput's Xlib state)
+    _restart_listener()
+
     _detect_callback = callback
     _detect_combo = None
     _detect_count = 0
@@ -130,12 +174,17 @@ def start_key_detection(callback):
 
 
 def stop_key_detection():
-    """Stop key detection mode."""
+    """Stop key detection mode and restart listener for clean state."""
     global _detect_callback, _detect_timer
     _detect_callback = None
     if _detect_timer:
         _detect_timer.cancel()
         _detect_timer = None
+    _held_keys.clear()
+    _held_keys_time.clear()
+    # Restart listener to ensure clean X11 state after tkinter popup
+    _restart_listener()
+    log("Key detection stopped")
 
 
 def _finalize_detection():
@@ -153,17 +202,17 @@ def _finalize_detection():
 _SINGLE_KEY_DISPLAY = {
     "ctrl_r": "Right Ctrl",
     "ctrl_l": "Left Ctrl",
-    "ctrl": "Ctrl",
+    "ctrl": "Left Ctrl",
     "alt_r": "Right Alt",
     "alt_l": "Left Alt",
-    "alt": "Alt",
+    "alt": "Left Alt",
     "alt_gr": "AltGr",
     "shift_r": "Right Shift",
     "shift_l": "Left Shift",
-    "shift": "Shift",
+    "shift": "Left Shift",
     "cmd_r": "Right Cmd",
     "cmd_l": "Left Cmd",
-    "cmd": "Cmd",
+    "cmd": "Left Cmd",
     "space": "Space",
     "tab": "Tab",
     "backspace": "Backspace",
@@ -232,15 +281,45 @@ def _execute_hotkey_action(hotkey_name, target_count, callback):
         _action_timer[hotkey_name] = None
 
 
+# Timestamp for each held key (for stale key cleanup)
+_held_keys_time = {}
+
+# Max time a key can be "held" before being considered stale (seconds)
+_HELD_KEY_MAX_AGE = 10.0
+
+
+def _cleanup_stale_keys():
+    """Remove keys that have been 'held' for too long (missed release event)."""
+    now = time.time()
+    stale = [k for k, t in _held_keys_time.items() if now - t > _HELD_KEY_MAX_AGE]
+    for k in stale:
+        _held_keys.discard(k)
+        _held_keys_time.pop(k, None)
+        log(f"Cleaned up stale held key: {k}", "debug")
+
+
 def _on_key_press(key):
     """Track currently held keys."""
-    key_name = _get_key_name(key)
-    if key_name:
-        _held_keys.add(key_name)
+    try:
+        key_name = _get_key_name(key)
+        if key_name:
+            _held_keys.add(key_name)
+            _held_keys_time[key_name] = time.time()
+            _cleanup_stale_keys()
+    except Exception as e:
+        log(f"Error in key press handler: {e}", "error")
 
 
 def _on_key_release(key):
     """Handle key release events."""
+    try:
+        _on_key_release_inner(key)
+    except Exception as e:
+        log(f"Error in key release handler: {e}", "error")
+
+
+def _on_key_release_inner(key):
+    """Inner key release handler (wrapped by _on_key_release for safety)."""
     key_name = _get_key_name(key)
     if not key_name:
         return
@@ -256,8 +335,8 @@ def _on_key_release(key):
         # Skip trailing modifier release after a combo
         # e.g., user did Ctrl+A, now releasing Ctrl -> ignore
         if is_modifier and _detect_combo and '+' in _detect_combo:
-            # Just remove from held keys and ignore
             _held_keys.discard(key_name)
+            _held_keys_time.pop(key_name, None)
             return
 
         combo = _build_combo_string(held_mods, key_name)
@@ -286,6 +365,7 @@ def _on_key_release(key):
         _detect_timer.start()
 
         _held_keys.discard(key_name)
+        _held_keys_time.pop(key_name, None)
         return
 
     # --- Normal hotkey matching ---
@@ -308,6 +388,7 @@ def _on_key_release(key):
 
     # Remove from held keys after matching
     _held_keys.discard(key_name)
+    _held_keys_time.pop(key_name, None)
 
 
 def _handle_hotkey_press(hotkey_name, target_count, callback):
@@ -357,23 +438,71 @@ def _handle_hotkey_press(hotkey_name, target_count, callback):
     _last_press_time[hotkey_name] = current_time
 
 
-def start_listener():
-    """Start the keyboard listener."""
-    listener = keyboard.Listener(
+_listener = None
+_listener_should_run = False
+_watchdog_running = False
+
+
+def _create_listener():
+    """Create a new keyboard listener."""
+    return keyboard.Listener(
         on_press=_on_key_press,
         on_release=_on_key_release
     )
-    listener.start()
+
+
+def _restart_listener():
+    """Stop the current listener and start a fresh one."""
+    global _listener
+    try:
+        if _listener:
+            try:
+                _listener.stop()
+            except Exception:
+                pass
+        _listener = _create_listener()
+        _listener.start()
+        log("Keyboard listener restarted")
+    except Exception as e:
+        log(f"Failed to restart keyboard listener: {e}", "error")
+
+
+def _listener_watchdog():
+    """Monitor the keyboard listener and restart it if it dies."""
+    while _listener_should_run:
+        time.sleep(5)
+        if _listener_should_run and _listener and not _listener.is_alive():
+            log("Keyboard listener died, restarting...", "warning")
+            _held_keys.clear()
+            _held_keys_time.clear()
+            _restart_listener()
+
+
+def start_listener():
+    """Start the keyboard listener with auto-restart watchdog."""
+    global _listener, _listener_should_run, _watchdog_running
+
+    _listener = _create_listener()
+    _listener.start()
+    _listener_should_run = True
+
+    # Start watchdog thread (only once)
+    if not _watchdog_running:
+        _watchdog_running = True
+        threading.Thread(target=_listener_watchdog, daemon=True).start()
 
     record_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
     history_desc = _get_hotkey_description(config.history_hotkey, config.history_press_count)
     log(f"Keyboard listener started - Record: {record_desc}, History: {history_desc}")
 
-    return listener
+    return _listener
 
 
-def stop_listener(listener):
-    """Stop the keyboard listener."""
-    if listener:
-        listener.stop()
+def stop_listener(listener=None):
+    """Stop the keyboard listener and watchdog."""
+    global _listener_should_run
+    _listener_should_run = False
+    target = listener or _listener
+    if target:
+        target.stop()
         log("Keyboard listener stopped")

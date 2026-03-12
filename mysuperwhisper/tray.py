@@ -300,17 +300,52 @@ def _on_refresh_devices(icon, item):
 def _show_shortcut_popup(title, current_key, current_count, on_save):
     """
     Show a popup to detect and configure a keyboard shortcut.
-    The user presses their desired shortcut (key + tap count),
-    the popup shows it live, and they validate with OK.
+    Uses tkinter's own key events (not pynput) to avoid X11 conflicts.
+    Stops the pynput listener while the popup is open.
     """
     from .keyboard import (
-        start_key_detection, stop_key_detection,
-        _get_key_display_name, reset_hotkey_state
+        _get_key_display_name, _build_combo_string, _get_single_key_display,
+        reset_hotkey_state, stop_listener, start_listener, MODIFIER_KEYS
     )
+
+    # Map tkinter keysym to pynput-compatible key names.
+    # On Linux, pynput reports left modifiers as generic names
+    # (e.g., "ctrl" not "ctrl_l") while right modifiers are specific.
+    _TK_KEYSYM_MAP = {
+        "Control_L": "ctrl", "Control_R": "ctrl_r",
+        "Alt_L": "alt", "Alt_R": "alt_r",
+        "ISO_Level3_Shift": "alt_gr",
+        "Shift_L": "shift", "Shift_R": "shift_r",
+        "Super_L": "cmd", "Super_R": "cmd_r",
+        "Caps_Lock": "caps_lock", "Num_Lock": "num_lock",
+        "Scroll_Lock": "scroll_lock",
+        "Escape": "esc", "Return": "enter", "KP_Enter": "enter",
+        "Tab": "tab", "BackSpace": "backspace",
+        "space": "space", "Insert": "insert", "Delete": "delete",
+        "Home": "home", "End": "end",
+        "Prior": "page_up", "Next": "page_down",
+        "Up": "up", "Down": "down", "Left": "left", "Right": "right",
+        "Print": "print_screen", "Pause": "pause", "Menu": "menu",
+    }
+    # Add function keys
+    for i in range(1, 25):
+        _TK_KEYSYM_MAP[f"F{i}"] = f"f{i}"
+
+    def _tk_to_key_name(keysym):
+        """Convert tkinter keysym to our config key name."""
+        if keysym in _TK_KEYSYM_MAP:
+            return _TK_KEYSYM_MAP[keysym]
+        if len(keysym) == 1:
+            return keysym.lower()
+        return keysym.lower()
 
     result = {"key": current_key, "count": current_count, "confirmed": False}
 
     def run_popup():
+        # Stop pynput listener to avoid X11 conflicts
+        stop_listener()
+        log("Pynput listener stopped for shortcut popup")
+
         root = tk.Tk()
         root.title(title)
         root.attributes('-topmost', True)
@@ -340,16 +375,17 @@ def _show_shortcut_popup(title, current_key, current_count, on_save):
 
         # Current shortcut display
         current_display = _get_key_display_name(current_key)
-        press_label = {1: "Single", 2: "Double", 3: "Triple"}.get(current_count, f"{current_count}x")
+        press_label = {1: "Single", 2: "Double", 3: "Triple"}.get(
+            current_count, f"{current_count}x"
+        )
         shortcut_var = tk.StringVar(value=f"{press_label} {current_display}")
 
-        shortcut_label = tk.Label(
+        tk.Label(
             root, textvariable=shortcut_var,
             font=('Sans', 18, 'bold'),
             bg='#3d3d3d', fg='#5294e2',
             pady=20, padx=20, relief='sunken'
-        )
-        shortcut_label.pack(fill='x', padx=30, pady=10)
+        ).pack(fill='x', padx=30, pady=10)
 
         # Buttons frame
         btn_frame = tk.Frame(root, bg='#2d2d2d')
@@ -357,11 +393,9 @@ def _show_shortcut_popup(title, current_key, current_count, on_save):
 
         def on_ok():
             result["confirmed"] = True
-            stop_key_detection()
             root.destroy()
 
         def on_cancel():
-            stop_key_detection()
             root.destroy()
 
         tk.Button(
@@ -376,20 +410,64 @@ def _show_shortcut_popup(title, current_key, current_count, on_save):
             width=10, command=on_cancel, relief='flat'
         ).pack(side='right', expand=True, padx=5)
 
-        # Live update callback from key detection
-        def on_key_update(key_name, display_name, count):
-            result["key"] = key_name
-            result["count"] = count
-            press = {1: "Single", 2: "Double", 3: "Triple"}.get(count, f"{count}x")
-            try:
-                shortcut_var.set(f"{press} {display_name}")
-            except tk.TclError:
-                pass  # Window already closed
+        # --- Tkinter-based key detection ---
+        held_keys = set()
+        detect_state = {"combo": None, "count": 0, "last_time": 0, "timer": None}
 
-        start_key_detection(on_key_update)
+        def update_display(combo, count):
+            display = _get_key_display_name(combo)
+            press = {1: "Single", 2: "Double", 3: "Triple"}.get(count, f"{count}x")
+            shortcut_var.set(f"{press} {display}")
+            result["key"] = combo
+            result["count"] = count
+
+        def on_key_press(event):
+            key_name = _tk_to_key_name(event.keysym)
+            held_keys.add(key_name)
+
+        def on_key_release(event):
+            key_name = _tk_to_key_name(event.keysym)
+            is_modifier = key_name in MODIFIER_KEYS
+
+            # Build combo from held modifiers + released key
+            held_mods = {k for k in held_keys if k in MODIFIER_KEYS and k != key_name}
+
+            # Skip trailing modifier release after a combo
+            if is_modifier and detect_state["combo"] and '+' in detect_state["combo"]:
+                held_keys.discard(key_name)
+                return
+
+            combo = _build_combo_string(held_mods, key_name)
+            current_time = time.time()
+
+            # Cancel pending timer
+            if detect_state["timer"]:
+                root.after_cancel(detect_state["timer"])
+                detect_state["timer"] = None
+
+            # Same combo pressed quickly -> increment count
+            if (combo == detect_state["combo"]
+                    and current_time - detect_state["last_time"] < 0.5):
+                detect_state["count"] += 1
+            else:
+                detect_state["combo"] = combo
+                detect_state["count"] = 1
+
+            detect_state["last_time"] = current_time
+            update_display(combo, detect_state["count"])
+
+            held_keys.discard(key_name)
+
+        root.bind('<KeyPress>', on_key_press)
+        root.bind('<KeyRelease>', on_key_release)
+        root.focus_force()
 
         root.protocol("WM_DELETE_WINDOW", on_cancel)
         root.mainloop()
+
+        # Restart pynput listener
+        start_listener()
+        log("Pynput listener restarted after shortcut popup")
 
         # Apply if confirmed
         if result["confirmed"]:
