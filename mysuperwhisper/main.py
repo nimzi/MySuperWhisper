@@ -32,6 +32,7 @@ import os
 import queue
 import threading
 
+import os
 from .config import log, config, LOG_FILE, CONFIG_DIR
 from . import audio
 from . import transcription
@@ -265,6 +266,10 @@ def main():
     log("Starting MySuperWhisper")
     log(f"Config directory: {CONFIG_DIR}")
     log(f"Log file: {LOG_FILE}")
+    log(f"[DEBUG] LD_LIBRARY_PATH={os.environ.get('LD_LIBRARY_PATH')}")
+    log(f"[DEBUG] sys.path={sys.path}")
+    log(f"[DEBUG] Executable={sys.executable}")
+    log(f"[DEBUG] CWD={os.getcwd()}")
 
     # Load configuration
     config.load()

@@ -228,6 +228,9 @@ def _on_select_model(name):
                 if _save_config_callback:
                     _save_config_callback()
                 update_tray("idle")
+                # Refresh menu to update radio button state
+                if _tray_icon:
+                    _tray_icon.menu = _create_menu()
 
             threading.Thread(target=_reload, daemon=True).start()
     return wrapper
