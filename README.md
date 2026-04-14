@@ -301,6 +301,23 @@ MySuperWhisper/
 
 ## Troubleshooting
 
+### Microphone privacy indicator stays on
+
+MySuperWhisper opens the microphone stream once at startup and keeps it open for
+the lifetime of the process. The audio callback silently discards everything while
+you are not actively recording, but the OS has no way to know that — so GNOME (and
+other desktops) show the microphone privacy indicator the entire time the app is
+running.
+
+This is by design: opening a stream is fast most of the time, but on some hardware
+it can introduce a noticeable delay, so the app keeps it open to guarantee an
+instant response when you press Double Ctrl.
+
+If the always-on indicator bothers you, the stream could instead be opened on
+Double Ctrl (recording start) and closed after transcription finishes. The
+trade-off is a small delay (~50 ms on most systems, potentially longer on some
+hardware) at the beginning of each recording before audio capture actually starts.
+
 ### No audio input
 - Check microphone permissions
 - Verify correct input device in tray menu
