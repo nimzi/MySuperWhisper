@@ -359,7 +359,7 @@ def _show_shortcut_popup(title, current_key, current_count, on_save):
         root.resizable(False, False)
 
         window_width = 450
-        window_height = 250
+        window_height = 280
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
         x = (screen_width - window_width) // 2
@@ -407,13 +407,13 @@ def _show_shortcut_popup(title, current_key, current_count, on_save):
         tk.Button(
             btn_frame, text="OK", font=('Sans', 11, 'bold'),
             bg='#5294e2', fg='#ffffff', activebackground='#4a84c8',
-            width=10, command=on_ok, relief='flat'
+            width=10, pady=8, command=on_ok, relief='flat'
         ).pack(side='left', expand=True, padx=5)
 
         tk.Button(
             btn_frame, text="Cancel", font=('Sans', 11),
             bg='#555555', fg='#ffffff', activebackground='#666666',
-            width=10, command=on_cancel, relief='flat'
+            width=10, pady=8, command=on_cancel, relief='flat'
         ).pack(side='right', expand=True, padx=5)
 
         # --- Tkinter-based key detection ---
