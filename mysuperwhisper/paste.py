@@ -65,48 +65,46 @@ def paste_text(text, press_enter=False):
         press_enter: If True, press Enter after pasting
     """
     session_type = detect_session_type()
-    
-    # Check if we are in a terminal
-    if _is_terminal(session_type):
-        # Terminals (mostly) use Ctrl+Shift+V for paste
-        # and handle multiline paste better as a single block.
-        _paste_clipboard(text, session_type, force_ctrl_shift_v=True)
-    else:
-        # Standard GUI App logic
-        has_newlines = '\n' in text
 
-        if has_newlines:
-            # For text with newlines, paste line by line with Shift+Return
-            # This prevents validation in chat apps
-            _paste_with_newlines(text, session_type)
-        else:
-            # Simple text: clipboard paste (Ctrl+V)
-            _paste_clipboard(text, session_type)
+    if session_type == "wayland":
+        # wtype types text directly — handles newlines and terminals uniformly
+        _paste_clipboard(text, session_type)
+    elif _is_terminal(session_type):
+        _paste_clipboard(text, session_type, force_ctrl_shift_v=True)
+    elif '\n' in text:
+        _paste_with_newlines(text, session_type)
+    else:
+        _paste_clipboard(text, session_type)
 
     if press_enter:
         time.sleep(0.05)
         _press_key("Return", session_type)
 
 
-def _paste_clipboard(text, session_type, force_ctrl_shift_v=False):
-    """Paste text using clipboard (Ctrl+V or Ctrl+Shift+V)."""
-    # Copy to clipboard
-    pyperclip.copy(text)
-    time.sleep(0.05)  # Slightly increased delay for reliability
+def _copy_to_clipboard(text, session_type):
+    """Copy text to the correct clipboard for the session type."""
+    if session_type == "wayland":
+        # wl-copy writes to the native Wayland clipboard
+        subprocess.run(["wl-copy"], input=text.encode(), check=True)
+    else:
+        pyperclip.copy(text)
 
+
+def _paste_clipboard(text, session_type, force_ctrl_shift_v=False):
+    """Paste text into the active application."""
     try:
         if session_type == "wayland":
-            if force_ctrl_shift_v:
-                # Ctrl+Shift+V on Wayland
-                subprocess.run(["wtype", "-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"])
-            else:
-                # Ctrl+V on Wayland
-                subprocess.run(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"])
-        else:
+            _copy_to_clipboard(text, session_type)
+            time.sleep(0.05)
             key_combo = "ctrl+shift+v" if force_ctrl_shift_v else "ctrl+v"
-            # X11
+            subprocess.run(["ydotool", "key", key_combo],
+                           env={**os.environ, "DISPLAY": ""})
+        else:
+            _copy_to_clipboard(text, session_type)
+            time.sleep(0.05)
+            key_combo = "ctrl+shift+v" if force_ctrl_shift_v else "ctrl+v"
             subprocess.run(["xdotool", "key", "--clearmodifiers", key_combo])
-            
+
     except FileNotFoundError as e:
         log(f"Paste tool not found: {e}", "error")
 

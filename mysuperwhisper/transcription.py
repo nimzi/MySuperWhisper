@@ -32,9 +32,9 @@ def load_model(model_size=None):
     log(f"Loading Faster-Whisper model '{size}'...")
 
     try:
-        _model = WhisperModel(size, device="cuda", compute_type="int8")
+        _model = WhisperModel(size, device="cuda", compute_type="float16")
         _is_cpu_mode = False
-        log("Model loaded successfully on GPU (INT8).")
+        log("Model loaded successfully on GPU (float16).")
         return True
     except Exception as e:
         log(f"GPU error: {e}", "warning")
@@ -67,7 +67,7 @@ def reload_model(new_model_size):
 
         # Try GPU first
         try:
-            new_model = WhisperModel(new_model_size, device="cuda", compute_type="int8")
+            new_model = WhisperModel(new_model_size, device="cuda", compute_type="float16")
             _is_cpu_mode = False
             log(f"New model '{new_model_size}' loaded on GPU.")
         except Exception as gpu_err:
@@ -86,7 +86,7 @@ def reload_model(new_model_size):
         log("Attempting to reload previous model 'medium'...", "warning")
 
         try:
-            _model = WhisperModel("medium", device="cuda", compute_type="int8")
+            _model = WhisperModel("medium", device="cuda", compute_type="float16")
             config.model_size = "medium"
             _is_cpu_mode = False
         except:

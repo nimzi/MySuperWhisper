@@ -4,10 +4,158 @@ Manages configurable hotkeys for recording and history.
 Supports key combinations (e.g., Ctrl+A), solo keys, and multi-tap detection.
 """
 
+import select
 import threading
 import time
-from pynput import keyboard
+import evdev
+from evdev import ecodes
 from .config import log, config
+
+# ---------------------------------------------------------------------------
+# evdev key-code -> pynput-style name mapping
+# ---------------------------------------------------------------------------
+_EVDEV_TO_PYNPUT: dict[int, str] = {
+    ecodes.KEY_LEFTCTRL:   'ctrl_l',
+    ecodes.KEY_RIGHTCTRL:  'ctrl_r',
+    ecodes.KEY_LEFTALT:    'alt_l',
+    ecodes.KEY_RIGHTALT:   'alt_r',
+    ecodes.KEY_LEFTSHIFT:  'shift_l',
+    ecodes.KEY_RIGHTSHIFT: 'shift_r',
+    ecodes.KEY_LEFTMETA:   'cmd_l',
+    ecodes.KEY_RIGHTMETA:  'cmd_r',
+    ecodes.KEY_SPACE:      'space',
+    ecodes.KEY_TAB:        'tab',
+    ecodes.KEY_ENTER:      'enter',
+    ecodes.KEY_ESC:        'esc',
+    ecodes.KEY_BACKSPACE:  'backspace',
+    ecodes.KEY_DELETE:     'delete',
+    ecodes.KEY_INSERT:     'insert',
+    ecodes.KEY_HOME:       'home',
+    ecodes.KEY_END:        'end',
+    ecodes.KEY_PAGEUP:     'page_up',
+    ecodes.KEY_PAGEDOWN:   'page_down',
+    ecodes.KEY_UP:         'up',
+    ecodes.KEY_DOWN:       'down',
+    ecodes.KEY_LEFT:       'left',
+    ecodes.KEY_RIGHT:      'right',
+    ecodes.KEY_CAPSLOCK:   'caps_lock',
+    ecodes.KEY_NUMLOCK:    'num_lock',
+    ecodes.KEY_SCROLLLOCK: 'scroll_lock',
+    ecodes.KEY_PRINT:      'print_screen',
+    ecodes.KEY_PAUSE:      'pause',
+    ecodes.KEY_MENU:       'menu',
+}
+# Function keys F1-F12
+for _i in range(1, 13):
+    _code = getattr(ecodes, f'KEY_F{_i}', None)
+    if _code is not None:
+        _EVDEV_TO_PYNPUT[_code] = f'f{_i}'
+# Alpha keys a-z (single char -> stored as char, not name)
+for _ch in 'abcdefghijklmnopqrstuvwxyz':
+    _code = getattr(ecodes, f'KEY_{_ch.upper()}', None)
+    if _code is not None:
+        _EVDEV_TO_PYNPUT[_code] = _ch
+# Digit keys 0-9
+for _d in '0123456789':
+    _code = getattr(ecodes, f'KEY_{_d}', None)
+    if _code is not None:
+        _EVDEV_TO_PYNPUT[_code] = _d
+
+
+class _EvdevKey:
+    """Minimal key object compatible with _get_key_name()."""
+    __slots__ = ('name', 'char', 'vk')
+
+    def __init__(self, pynput_name: str):
+        # Multi-char strings are special keys (ctrl_l, f1, space…)
+        # Single-char strings are printable characters (a, 0…)
+        if len(pynput_name) == 1:
+            self.name = None
+            self.char = pynput_name
+        else:
+            self.name = pynput_name
+            self.char = None
+        self.vk = None
+
+
+def _make_key(pynput_name: str) -> _EvdevKey:
+    return _EvdevKey(pynput_name)
+
+
+class _EvdevListener:
+    """
+    Global keyboard listener using evdev – works on Wayland without X11.
+    Reads from every device that exposes KEY_LEFTCTRL (real keyboards).
+    """
+
+    def __init__(self, on_press, on_release):
+        self._on_press = on_press
+        self._on_release = on_release
+        self._running = False
+        self._threads: list[threading.Thread] = []
+        self._devices: list[evdev.InputDevice] = []
+
+    # ------------------------------------------------------------------
+    def start(self):
+        self._running = True
+        self._open_devices()
+
+    def stop(self):
+        self._running = False
+        for dev in self._devices:
+            try:
+                dev.close()
+            except Exception:
+                pass
+        for t in self._threads:
+            t.join(timeout=1.0)
+        self._devices.clear()
+        self._threads.clear()
+
+    def is_alive(self) -> bool:
+        return self._running and any(t.is_alive() for t in self._threads)
+
+    # ------------------------------------------------------------------
+    def _open_devices(self):
+        for path in evdev.list_devices():
+            try:
+                dev = evdev.InputDevice(path)
+                caps = dev.capabilities()
+                # Only real keyboards – must have EV_KEY and KEY_LEFTCTRL
+                if ecodes.EV_KEY in caps and ecodes.KEY_LEFTCTRL in caps[ecodes.EV_KEY]:
+                    self._devices.append(dev)
+                    t = threading.Thread(
+                        target=self._read_device,
+                        args=(dev,),
+                        daemon=True,
+                        name=f'evdev-{path}',
+                    )
+                    t.start()
+                    self._threads.append(t)
+                else:
+                    dev.close()
+            except (PermissionError, OSError):
+                pass
+
+    def _read_device(self, device: evdev.InputDevice):
+        try:
+            while self._running:
+                r, _, _ = select.select([device.fd], [], [], 0.1)
+                if not r:
+                    continue
+                for event in device.read():
+                    if event.type != ecodes.EV_KEY:
+                        continue
+                    name = _EVDEV_TO_PYNPUT.get(event.code)
+                    if name is None:
+                        continue
+                    key = _make_key(name)
+                    if event.value == 1:    # key down
+                        self._on_press(key)
+                    elif event.value == 0:  # key up
+                        self._on_release(key)
+        except (OSError, IOError):
+            pass  # device disconnected – thread exits cleanly
 
 # Callback functions (set by main module)
 _on_record_hotkey = None
@@ -443,11 +591,11 @@ _listener_should_run = False
 _watchdog_running = False
 
 
-def _create_listener():
-    """Create a new keyboard listener."""
-    return keyboard.Listener(
+def _create_listener() -> _EvdevListener:
+    """Create a new evdev-based keyboard listener."""
+    return _EvdevListener(
         on_press=_on_key_press,
-        on_release=_on_key_release
+        on_release=_on_key_release,
     )
 
 
