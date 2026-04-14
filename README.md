@@ -11,6 +11,7 @@
 <p align="center">
   <a href="#features">Features</a> •
   <a href="#installation">Installation</a> •
+  <a href="#gnome-wayland-setup">GNOME Wayland</a> •
   <a href="#usage">Usage</a> •
   <a href="#voice-commands">Voice Commands</a> •
   <a href="#configuration">Configuration</a> •
@@ -24,7 +25,7 @@ MySuperWhisper is a Linux desktop application that provides **global voice-to-te
 ## Features
 
 - 🎤 **Global Hotkey** - Fully configurable shortcut works in any application
-- 🚀 **GPU Acceleration** - Uses CUDA with INT8 quantization for fast transcription
+- 🚀 **GPU Acceleration** - Uses CUDA with float16 for fast transcription
 - 🧠 **Multiple Models** - Choose from tiny to large-v3 based on your needs
 - 🗣️ **Voice Commands** - Say "new line" or "enter" to control text formatting
 - 📜 **History** - Triple Ctrl opens recent transcriptions for quick re-use
@@ -59,14 +60,85 @@ chmod +x install.sh
 # System dependencies
 sudo apt install python3-venv python3-pip xdotool libnotify-bin pulseaudio-utils
 
-# For Wayland support (optional)
-sudo apt install wtype
+# For Wayland support
+sudo apt install wl-clipboard ydotool
 
 # Python environment
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+## GNOME Wayland Setup
+
+The default install works on **X11 and non-GNOME Wayland compositors** out of the box.
+On **GNOME Wayland** (tested on Ubuntu 24.04), three additional steps are required
+because mutter does not support the virtual keyboard protocol used by `wtype`.
+
+### Why the default install breaks on GNOME Wayland
+
+| Problem | Root cause | Fix applied |
+|---------|-----------|-------------|
+| Global hotkey does nothing | `pynput` uses the X11/Xlib backend when `$DISPLAY` is set; only sees events in XWayland windows | Replaced with `evdev` listener reading `/dev/input/event*` directly |
+| Text never appears after transcription | `wtype` requires `zwp_virtual_keyboard_v1`, unsupported by mutter | Replaced with `ydotool type` via kernel uinput |
+| First 1–2 characters are cut off | Without `ydotoold`, each `ydotool` run creates a fresh uinput device; kernel needs ~300 ms to register it | Run `ydotoold` as a persistent user service |
+
+### Extra steps for GNOME Wayland
+
+**1. Ensure your user is in the `input` group**
+
+The `evdev`-based keyboard listener reads `/dev/input/event*` directly, which requires
+membership in the `input` group:
+
+```bash
+groups $USER | grep input   # should list 'input'
+# If not:
+sudo usermod -aG input $USER   # then log out and back in
+```
+
+**2. Install `wl-clipboard`**
+
+```bash
+sudo apt install wl-clipboard
+```
+
+**3. Install `ydotool` ≥ 1.x and enable the `ydotoold` daemon**
+
+Without the `ydotoold` daemon, each `ydotool` invocation creates a fresh uinput
+device and the kernel takes ~300 ms to register it — causing the first 1–2
+characters of every transcription to be silently dropped. The daemon keeps a
+single uinput device alive permanently, so there is zero startup latency.
+
+First check whether your distro already ships a version that includes `ydotoold`:
+
+```bash
+apt-cache show ydotool | grep Version
+# If Version >= 1.0, just install it:
+sudo apt install ydotool
+```
+
+On **Ubuntu 24.04**, apt only ships **0.1.8** which does not include `ydotoold`.
+Build from source instead (later Ubuntu releases may ship ≥ 1.x, making this unnecessary):
+
+```bash
+# Build dependencies
+sudo apt install cmake libevdev-dev libudev-dev scdoc
+
+# Build and install
+git clone --depth=1 https://github.com/ReimuNotMoe/ydotool.git /tmp/ydotool-src
+cmake -B /tmp/ydotool-src/build /tmp/ydotool-src
+cmake --build /tmp/ydotool-src/build -j$(nproc)
+sudo cmake --install /tmp/ydotool-src/build
+```
+
+Either way, enable the daemon as a user systemd service (starts automatically on login):
+
+```bash
+systemctl --user enable --now ydotoold
+```
+
+After these steps, restart MySuperWhisper — global hotkeys and text typing will work
+in all applications including terminals.
 
 ## Usage
 
@@ -244,12 +316,12 @@ MySuperWhisper/
 - **Solution:** Restart your computer to ensure the new drivers are correctly loaded.
 
 ### Text not typed in some applications
-- Some applications may not accept simulated keyboard input
-- **Workaround:** The transcribed text is **always copied to your clipboard**. If automated typing fails, you can simply paste it manually (Ctrl+V).
+- On **GNOME Wayland**, text is typed directly via `ydotool` (uinput) — the clipboard is not used. See [GNOME Wayland Setup](#gnome-wayland-setup).
+- On **X11**, transcribed text is copied to the clipboard and pasted with Ctrl+V.
 
 ### New line doesn't work in terminal
-- This should be handled automatically now (auto-switch to Ctrl+Shift+V)
-- If not, try pasting manually using Ctrl+Shift+V
+- On Wayland, `ydotool type` handles newlines natively — no special paste key needed.
+- On X11, the app auto-switches to Ctrl+Shift+V in detected terminal windows.
 
 ## Dependencies
 
@@ -258,7 +330,7 @@ MySuperWhisper uses these excellent open-source projects:
 | Package | Purpose | License |
 |---------|---------|---------|
 | [faster-whisper](https://github.com/guillaumekln/faster-whisper) | Whisper implementation | MIT |
-| [pynput](https://github.com/moses-palmer/pynput) | Keyboard monitoring | LGPL-3.0 |
+| [evdev](https://github.com/gvalkov/python-evdev) | Global keyboard monitoring (Wayland) | MIT |
 | [pystray](https://github.com/moses-palmer/pystray) | System tray | LGPL-3.0 |
 | [sounddevice](https://python-sounddevice.readthedocs.io/) | Audio capture | MIT |
 | [numpy](https://numpy.org/) | Numerical processing | BSD |
