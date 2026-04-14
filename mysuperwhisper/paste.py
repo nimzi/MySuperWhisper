@@ -67,8 +67,9 @@ def paste_text(text, press_enter=False):
     session_type = detect_session_type()
 
     if session_type == "wayland":
-        # wtype types text directly — handles newlines and terminals uniformly
-        _paste_clipboard(text, session_type)
+        # ydotool types via uinput — works in terminals and GUI apps alike,
+        # no clipboard involved, no compositor protocol needed
+        _type_direct(text)
     elif _is_terminal(session_type):
         _paste_clipboard(text, session_type, force_ctrl_shift_v=True)
     elif '\n' in text:
@@ -90,21 +91,21 @@ def _copy_to_clipboard(text, session_type):
         pyperclip.copy(text)
 
 
-def _paste_clipboard(text, session_type, force_ctrl_shift_v=False):
-    """Paste text into the active application."""
+def _type_direct(text):
+    """Type text directly via ydotool (uinput) — no clipboard needed."""
     try:
-        if session_type == "wayland":
-            _copy_to_clipboard(text, session_type)
-            time.sleep(0.05)
-            key_combo = "ctrl+shift+v" if force_ctrl_shift_v else "ctrl+v"
-            subprocess.run(["ydotool", "key", key_combo],
-                           env={**os.environ, "DISPLAY": ""})
-        else:
-            _copy_to_clipboard(text, session_type)
-            time.sleep(0.05)
-            key_combo = "ctrl+shift+v" if force_ctrl_shift_v else "ctrl+v"
-            subprocess.run(["xdotool", "key", "--clearmodifiers", key_combo])
+        subprocess.run(["ydotool", "type", "--key-delay", "12", "--", text])
+    except FileNotFoundError as e:
+        log(f"ydotool not found: {e}", "error")
 
+
+def _paste_clipboard(text, session_type, force_ctrl_shift_v=False):
+    """Paste text via clipboard (X11 path only)."""
+    try:
+        _copy_to_clipboard(text, session_type)
+        time.sleep(0.05)
+        key_combo = "ctrl+shift+v" if force_ctrl_shift_v else "ctrl+v"
+        subprocess.run(["xdotool", "key", "--clearmodifiers", key_combo])
     except FileNotFoundError as e:
         log(f"Paste tool not found: {e}", "error")
 
@@ -128,14 +129,7 @@ def _press_key(key, session_type):
     """Press a key or key combination."""
     try:
         if session_type == "wayland":
-            if '+' in key:
-                # Handle modifier+key combo (e.g., "shift+Return")
-                parts = key.split('+')
-                modifier = parts[0].lower()
-                keyname = parts[1]
-                subprocess.run(["wtype", "-M", modifier, "-k", keyname, "-m", modifier])
-            else:
-                subprocess.run(["wtype", "-k", key])
+            subprocess.run(["ydotool", "key", key])
         else:
             subprocess.run(["xdotool", "key", "--clearmodifiers", key])
     except FileNotFoundError as e:
