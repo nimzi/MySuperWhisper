@@ -82,10 +82,17 @@ def _make_key(pynput_name: str) -> _EvdevKey:
     return _EvdevKey(pynput_name)
 
 
+_KEYBOARD_INDICATORS = (
+    ecodes.KEY_LEFTCTRL, ecodes.KEY_CAPSLOCK,
+    ecodes.KEY_A, ecodes.KEY_SPACE,
+)
+
+
 class _EvdevListener:
     """
     Global keyboard listener using evdev – works on Wayland without X11.
-    Reads from every device that exposes KEY_LEFTCTRL (real keyboards).
+    Reads from every device that exposes keyboard keys. Automatically
+    re-opens devices that reconnect (e.g. Bluetooth keyboards).
     """
 
     def __init__(self, on_press, on_release):
@@ -94,48 +101,78 @@ class _EvdevListener:
         self._running = False
         self._threads: list[threading.Thread] = []
         self._devices: list[evdev.InputDevice] = []
+        self._open_paths: set[str] = set()  # paths currently being monitored
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     def start(self):
         self._running = True
         self._open_devices()
+        t = threading.Thread(target=self._hotplug_monitor, daemon=True, name='evdev-hotplug')
+        t.start()
+        self._threads.append(t)
 
     def stop(self):
         self._running = False
-        for dev in self._devices:
-            try:
-                dev.close()
-            except Exception:
-                pass
+        with self._lock:
+            for dev in self._devices:
+                try:
+                    dev.close()
+                except Exception:
+                    pass
         for t in self._threads:
             t.join(timeout=1.0)
         self._devices.clear()
         self._threads.clear()
+        self._open_paths.clear()
 
     def is_alive(self) -> bool:
         return self._running and any(t.is_alive() for t in self._threads)
 
     # ------------------------------------------------------------------
+    def _is_keyboard(self, dev: evdev.InputDevice) -> bool:
+        caps = dev.capabilities()
+        key_caps = caps.get(ecodes.EV_KEY, [])
+        return ecodes.EV_KEY in caps and any(k in key_caps for k in _KEYBOARD_INDICATORS)
+
     def _open_devices(self):
         for path in evdev.list_devices():
-            try:
-                dev = evdev.InputDevice(path)
-                caps = dev.capabilities()
-                # Only real keyboards – must have EV_KEY and KEY_LEFTCTRL
-                if ecodes.EV_KEY in caps and ecodes.KEY_LEFTCTRL in caps[ecodes.EV_KEY]:
+            self._try_open(path)
+
+    def _try_open(self, path: str):
+        with self._lock:
+            if path in self._open_paths:
+                return
+        try:
+            dev = evdev.InputDevice(path)
+            if self._is_keyboard(dev):
+                with self._lock:
+                    self._open_paths.add(path)
                     self._devices.append(dev)
-                    t = threading.Thread(
-                        target=self._read_device,
-                        args=(dev,),
-                        daemon=True,
-                        name=f'evdev-{path}',
-                    )
-                    t.start()
+                t = threading.Thread(
+                    target=self._read_device,
+                    args=(dev,),
+                    daemon=True,
+                    name=f'evdev-{path}',
+                )
+                t.start()
+                with self._lock:
                     self._threads.append(t)
-                else:
-                    dev.close()
-            except (PermissionError, OSError):
-                pass
+                log(f"Keyboard device opened: {dev.name} ({path})")
+            else:
+                dev.close()
+        except (PermissionError, OSError):
+            pass
+
+    def _hotplug_monitor(self):
+        """Periodically scan for new input devices (handles Bluetooth reconnects)."""
+        while self._running:
+            time.sleep(3)
+            for path in evdev.list_devices():
+                with self._lock:
+                    already_open = path in self._open_paths
+                if not already_open:
+                    self._try_open(path)
 
     def _read_device(self, device: evdev.InputDevice):
         try:
@@ -156,6 +193,11 @@ class _EvdevListener:
                         self._on_release(key)
         except (OSError, IOError):
             pass  # device disconnected – thread exits cleanly
+        finally:
+            path = device.path
+            with self._lock:
+                self._open_paths.discard(path)
+            log(f"Keyboard device disconnected: {device.name} ({path})", "debug")
 
 # Callback functions (set by main module)
 _on_record_hotkey = None

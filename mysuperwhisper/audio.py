@@ -316,6 +316,28 @@ def start_recording():
     is_recording = True
 
 
+def _reset_pulse_source():
+    """Suspend then resume the active PulseAudio source to unstick USB mics."""
+    try:
+        source = config.input_device
+        if not source:
+            result = subprocess.run(
+                ["pactl", "get-default-source"],
+                capture_output=True, text=True, timeout=3
+            )
+            source = result.stdout.strip()
+        if not source:
+            return
+        subprocess.run(["pactl", "suspend-source", source, "1"], timeout=3)
+        time.sleep(0.5)
+        subprocess.run(["pactl", "suspend-source", source, "0"], timeout=3)
+        time.sleep(0.5)
+        log(f"Mic reset done ({source}), restarting stream...")
+        restart_stream()
+    except Exception as e:
+        log(f"Mic reset failed: {e}", "error")
+
+
 def stop_recording():
     """
     Stop recording and return captured audio.
@@ -329,7 +351,8 @@ def stop_recording():
     is_recording = False
 
     if not audio_buffer:
-        log("No audio recorded.", "warning")
+        log("No audio recorded — attempting mic reset...", "warning")
+        _reset_pulse_source()
         return None
 
     try:

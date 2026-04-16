@@ -798,6 +798,9 @@ def device_monitor_worker():
                         _tray_icon.menu = _create_menu()
                     except Exception as e:
                         log(f"Menu update error: {e}", "error")
+                if not audio.is_currently_recording():
+                    log("Restarting audio stream after device change...")
+                    audio.restart_stream()
 
             last_device_signature = current_signature
         except Exception as e:
