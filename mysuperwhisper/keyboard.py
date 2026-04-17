@@ -559,13 +559,15 @@ def _on_key_release_inner(key):
         return
 
     # --- Normal hotkey matching ---
-    # Check for record hotkey
-    if _matches_hotkey(key, config.record_hotkey):
-        _handle_hotkey_press(
-            "record",
-            config.record_press_count,
-            _on_record_hotkey
-        )
+    # Check each configured record trigger
+    for _trigger in config.record_hotkeys:
+        if _matches_hotkey(key, _trigger["key"]):
+            _handle_hotkey_press(
+                f"record_{_trigger['key']}",
+                _trigger["count"],
+                _on_record_hotkey
+            )
+            break  # first match wins
 
     # Check for history hotkey (only if not recording)
     if _matches_hotkey(key, config.history_hotkey):
@@ -681,7 +683,9 @@ def start_listener():
         _watchdog_running = True
         threading.Thread(target=_listener_watchdog, daemon=True).start()
 
-    record_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
+    record_desc = " or ".join(
+        _get_hotkey_description(h["key"], h["count"]) for h in config.record_hotkeys
+    )
     history_desc = _get_hotkey_description(config.history_hotkey, config.history_press_count)
     log(f"Keyboard listener started - Record: {record_desc}, History: {history_desc}")
 

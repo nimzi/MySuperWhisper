@@ -110,7 +110,9 @@ def update_tray(status, level=0.0):
         # Green = transcribe mode, Purple = translate mode
         color = (138, 43, 226) if config.task == "translate" else "green"
         from .keyboard import _get_hotkey_description
-        hotkey_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
+        hotkey_desc = " or ".join(
+            _get_hotkey_description(h["key"], h["count"]) for h in config.record_hotkeys
+        )
         task_label = "Translate→EN" if config.task == "translate" else "Transcribe"
         detail = f"Ready ({hotkey_desc}) [{task_label}]"
     elif status == "recording":
@@ -318,11 +320,11 @@ def _show_shortcut_popup(title, current_key, current_count, on_save):
     # On Linux, pynput reports left modifiers as generic names
     # (e.g., "ctrl" not "ctrl_l") while right modifiers are specific.
     _TK_KEYSYM_MAP = {
-        "Control_L": "ctrl", "Control_R": "ctrl_r",
-        "Alt_L": "alt", "Alt_R": "alt_r",
+        "Control_L": "ctrl_l", "Control_R": "ctrl_r",
+        "Alt_L": "alt_l", "Alt_R": "alt_r",
         "ISO_Level3_Shift": "alt_gr",
-        "Shift_L": "shift", "Shift_R": "shift_r",
-        "Super_L": "cmd", "Super_R": "cmd_r",
+        "Shift_L": "shift_l", "Shift_R": "shift_r",
+        "Super_L": "cmd_l", "Super_R": "cmd_r",
         "Caps_Lock": "caps_lock", "Num_Lock": "num_lock",
         "Scroll_Lock": "scroll_lock",
         "Escape": "esc", "Return": "enter", "KP_Enter": "enter",
@@ -483,23 +485,36 @@ def _show_shortcut_popup(title, current_key, current_count, on_save):
     threading.Thread(target=run_popup, daemon=True).start()
 
 
-def _on_configure_record_shortcut(icon, item):
-    """Open shortcut configuration popup for record."""
+def _on_add_record_trigger(icon, item):
+    """Open shortcut popup to add a new record trigger."""
     def on_save(key, count):
-        config.record_hotkey = key
-        config.record_press_count = count
+        config.record_hotkeys.append({"key": key, "count": count})
         if _save_config_callback:
             _save_config_callback()
         from .keyboard import _get_hotkey_description
-        desc = _get_hotkey_description(key, count)
-        log(f"Record shortcut changed to: {desc}")
+        log(f"Record trigger added: {_get_hotkey_description(key, count)}")
+        from .keyboard import reset_hotkey_state
+        reset_hotkey_state()
         icon.menu = _create_menu()
         update_tray("idle")
 
-    _show_shortcut_popup(
-        "Record Shortcut",
-        config.record_hotkey, config.record_press_count, on_save
-    )
+    _show_shortcut_popup("Add Record Trigger", "caps_lock", 1, on_save)
+
+
+def _make_remove_record_trigger(icon, idx):
+    """Return a handler that removes record trigger at idx."""
+    def handler(icon, item):
+        if len(config.record_hotkeys) <= 1:
+            return  # keep at least one trigger
+        from .keyboard import _get_hotkey_description, reset_hotkey_state
+        removed = config.record_hotkeys.pop(idx)
+        log(f"Record trigger removed: {_get_hotkey_description(removed['key'], removed['count'])}")
+        if _save_config_callback:
+            _save_config_callback()
+        reset_hotkey_state()
+        icon.menu = _create_menu()
+        update_tray("idle")
+    return handler
 
 
 def _on_configure_history_shortcut(icon, item):
@@ -690,14 +705,27 @@ def _create_menu():
     # Hotkey configuration
     from .keyboard import _get_hotkey_description
 
-    record_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
+    # Build record triggers submenu
+    trigger_items = []
+    for idx, h in enumerate(config.record_hotkeys):
+        desc = _get_hotkey_description(h["key"], h["count"])
+        can_remove = len(config.record_hotkeys) > 1
+        if can_remove:
+            trigger_items.append(pystray.MenuItem(
+                f"{desc}  — Remove",
+                _make_remove_record_trigger(_tray_icon, idx)
+            ))
+        else:
+            trigger_items.append(pystray.MenuItem(desc, None, enabled=False))
+    trigger_items.append(pystray.Menu.SEPARATOR)
+    trigger_items.append(pystray.MenuItem("Add trigger...", _on_add_record_trigger))
+
+    record_triggers_menu = pystray.Menu(*trigger_items)
+
     history_desc = _get_hotkey_description(config.history_hotkey, config.history_press_count)
 
     hotkeys_menu = pystray.Menu(
-        pystray.MenuItem(
-            f"🎤 Record: {record_desc}  — Configure...",
-            _on_configure_record_shortcut
-        ),
+        pystray.MenuItem("🎤 Record triggers", record_triggers_menu),
         pystray.MenuItem(
             f"📜 History: {history_desc}  — Configure...",
             _on_configure_history_shortcut

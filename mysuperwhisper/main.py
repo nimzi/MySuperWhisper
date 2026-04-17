@@ -213,7 +213,9 @@ def startup_worker():
 
     # Log ready message with actual hotkey
     from .keyboard import _get_hotkey_description
-    hotkey_desc = _get_hotkey_description(config.record_hotkey, config.record_press_count)
+    hotkey_desc = " or ".join(
+        _get_hotkey_description(h["key"], h["count"]) for h in config.record_hotkeys
+    )
     log(f"Ready! Press {hotkey_desc} to start/stop recording.")
     log("The icon has been added to the notification area (system tray).")
     log("Right-click the icon to change microphone or test audio level.")
