@@ -3,7 +3,61 @@ Whisper transcription engine for MySuperWhisper.
 Handles model loading and speech-to-text conversion.
 """
 
+import ctypes
 import gc
+import os
+import sys
+from pathlib import Path
+
+
+def _preload_cuda_libs():
+    """
+    Preload CUDA runtime libraries (cublas, cudnn) shipped via the
+    nvidia-cublas-cu12 / nvidia-cudnn-cu12 pip packages. ctranslate2 dlopens
+    these by bare name, which only works if the OS linker can find them —
+    venv site-packages is not on the default search path.
+    """
+    try:
+        import nvidia  # noqa: F401
+    except ImportError:
+        return
+
+    nvidia_root = Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages" / "nvidia"
+    if not nvidia_root.exists():
+        # Fallback: probe every site-packages dir
+        import site
+        for sp in site.getsitepackages() + [site.getusersitepackages()]:
+            cand = Path(sp) / "nvidia"
+            if cand.exists():
+                nvidia_root = cand
+                break
+        else:
+            return
+
+    lib_dirs = []
+    for sub in ("cublas/lib", "cudnn/lib", "cuda_nvrtc/lib", "cuda_runtime/lib"):
+        d = nvidia_root / sub
+        if d.is_dir():
+            lib_dirs.append(str(d))
+
+    if not lib_dirs:
+        return
+
+    # Make them discoverable for subsequent dlopens (ctranslate2 internals)
+    existing = os.environ.get("LD_LIBRARY_PATH", "")
+    os.environ["LD_LIBRARY_PATH"] = ":".join(lib_dirs + ([existing] if existing else []))
+
+    # Preload the libs into the global namespace so ctranslate2's dlopen-by-name finds them
+    for d in lib_dirs:
+        for so in sorted(Path(d).glob("lib*.so*")):
+            try:
+                ctypes.CDLL(str(so), mode=ctypes.RTLD_GLOBAL)
+            except OSError:
+                pass
+
+
+_preload_cuda_libs()
+
 from faster_whisper import WhisperModel
 from .config import log, config
 
