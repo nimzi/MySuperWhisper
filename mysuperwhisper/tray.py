@@ -360,14 +360,6 @@ def _show_shortcut_popup(title, current_key, current_count, on_save):
         root.configure(bg='#2d2d2d')
         root.resizable(False, False)
 
-        window_width = 450
-        window_height = 280
-        screen_width = root.winfo_screenwidth()
-        screen_height = root.winfo_screenheight()
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-        root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-
         # Title
         tk.Label(
             root, text=title, font=('Sans', 13, 'bold'),
@@ -417,6 +409,17 @@ def _show_shortcut_popup(title, current_key, current_count, on_save):
             bg='#555555', fg='#ffffff', activebackground='#666666',
             width=10, pady=8, command=on_cancel, relief='flat'
         ).pack(side='right', expand=True, padx=5)
+
+        # Center window after all widgets are packed
+        root.update_idletasks()
+        min_width = 520
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        window_width = max(min_width, root.winfo_reqwidth())
+        window_height = root.winfo_reqheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        root.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
         # --- Tkinter-based key detection ---
         held_keys = set()
