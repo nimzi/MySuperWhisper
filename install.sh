@@ -264,10 +264,26 @@ if [ "$IS_GNOME_WAYLAND" = true ]; then
 
     [ "$need_build" = true ] && _install_ydotool_from_source
 
+    # ydotoold needs access to /dev/uinput, which is root-only by default.
+    # Install a udev rule so the input group can use it.
+    UINPUT_RULE=/etc/udev/rules.d/60-ydotool-uinput.rules
+    if [ ! -f "$UINPUT_RULE" ]; then
+        echo "   Installing udev rule for /dev/uinput access..."
+        echo 'KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"' \
+            | sudo tee "$UINPUT_RULE" >/dev/null
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=uinput
+    fi
+
     if command -v ydotoold &>/dev/null; then
         echo "   Enabling ydotoold user service..."
         systemctl --user enable --now ydotoold
-        echo "   ydotoold is running."
+        sleep 1
+        if systemctl --user is-active --quiet ydotoold; then
+            echo "   ydotoold is running."
+        else
+            echo -e "   ${YELLOW}Warning: ydotoold failed to start. You may need to log out and back in (input group), then run: systemctl --user restart ydotoold${NC}"
+        fi
     else
         echo -e "   ${YELLOW}Warning: ydotoold not found — first characters of transcriptions may be dropped.${NC}"
     fi
